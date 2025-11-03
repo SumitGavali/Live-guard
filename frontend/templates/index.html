@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveGuard - Enhanced Security Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .status-stopped {
+            background-color: #ef4444;
+        }
+
+        .status-running {
+            background-color: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .sparkline {
+            width: 60px;
+            height: 20px;
+            margin-left: 10px;
+        }
+
+        .severity-critical {
+            border-left: 4px solid #dc2626;
+            background-color: #fef2f2;
+        }
+
+        .severity-high {
+            border-left: 4px solid #ea580c;
+            background-color: #fff7ed;
+        }
+
+        .severity-medium {
+            border-left: 4px solid #d97706;
+            background-color: #fffbeb;
+        }
+
+        .severity-low {
+            border-left: 4px solid #2563eb;
+            background-color: #eff6ff;
+        }
+
+        .new-alert {
+            animation: highlight 2s ease-in-out;
+        }
+
+        @keyframes highlight {
+            0% {
+                background-color: #fef3c7;
+            }
+
+            100% {
+                background-color: transparent;
+            }
+        }
+
+        .network-node {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .network-node:hover {
+            stroke-width: 3px;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 font-sans">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center">
+                    <h1 class="text-2xl font-bold text-gray-900">LiveGuard</h1>
+                    <span class="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">ENHANCED MODE</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="statusIndicator" class="flex items-center">
+                        <div class="status-indicator status-stopped"></div>
+                        <span class="text-sm text-gray-600">Capture Stopped</span>
+                    </div>
+                    <button id="toggleCapture"
+                        class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors">
+                        Start Capture
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <!-- Enhanced Stats Cards with Sparklines -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <!-- Total Packets Card -->
+            <div class="bg-white rounded-lg shadow p-4 cursor-pointer" onclick="dashboard.filterByType('all')">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-500 mb-1">TOTAL PACKETS</h3>
+                        <p id="totalPackets" class="text-2xl font-bold text-blue-600">0</p>
+                        <p class="text-xs text-gray-400 mt-1">24h avg: <span id="packetsAvg">0</span></p>
+                    </div>
+                    <div class="sparkline" id="packetsSparkline">
+                        <canvas width="60" height="20"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Packets/Sec Card -->
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-500 mb-1">PACKETS/SEC</h3>
+                        <p id="packetsPerSecond" class="text-2xl font-bold text-green-600">0</p>
+                        <p class="text-xs text-gray-400 mt-1">Peak: <span id="packetsPeak">0</span>/s</p>
+                    </div>
+                    <div class="sparkline" id="rateSparkline">
+                        <canvas width="60" height="20"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Threats Card -->
+            <div class="bg-white rounded-lg shadow p-4 cursor-pointer" onclick="dashboard.filterByStatus('active')">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-500 mb-1">ACTIVE THREATS</h3>
+                        <p id="activeThreats" class="text-2xl font-bold text-red-600">0</p>
+                        <p class="text-xs text-gray-400 mt-1">24h avg: <span id="threatsAvg">0</span></p>
+                    </div>
+                    <div class="sparkline" id="threatsSparkline">
+                        <canvas width="60" height="20"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Uptime Card -->
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-500 mb-1">UPTIME</h3>
+                        <p id="uptime" class="text-2xl font-bold text-purple-600">0s</p>
+                        <p class="text-xs text-gray-400 mt-1">Since <span id="startTime">--:--</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Top Row: Network Map and Threat Charts -->
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+            <!-- Network Map / Threat Landscape -->
+            <div class="xl:col-span-2 bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">Threat Landscape</h2>
+                    <div class="flex space-x-2">
+                        <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                            onclick="dashboard.resetNetworkView()">
+                            Reset View
+                        </button>
+                        <button
+                            class="px-3 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+                            onclick="dashboard.refreshNetwork()">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div id="networkMap" class="w-full h-64 bg-gray-50 rounded border">
+                    <div class="flex items-center justify-center h-full text-gray-500">
+                        Loading network visualization...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Threat Charts Column -->
+            <div class="space-y-6">
+                <!-- Threat Severity Breakdown -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Threat Severity</h2>
+                    <div class="h-48">
+                        <canvas id="severityChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Top Threat Types -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Top Threat Types</h2>
+                    <div class="h-48">
+                        <canvas id="threatTypesChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Middle Row: Recent Alerts and Top Targeted Assets -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <!-- Recent Alerts - Full Width -->
+            <div class="lg:col-span-2 bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">Recent Security Alerts</h2>
+                    <div class="flex space-x-2">
+                        <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                            onclick="dashboard.filterAlerts('all')">
+                            All
+                        </button>
+                        <button class="px-3 py-1 text-xs bg-red-100 hover:bg-red-200 rounded transition-colors"
+                            onclick="dashboard.filterAlerts('active')">
+                            Active Only
+                        </button>
+                    </div>
+                </div>
+                <div id="alertsList" class="space-y-3 max-h-96 overflow-y-auto">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>No alerts yet. Start capture to begin monitoring.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Targeted Assets -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">Top Targeted Assets</h2>
+                <div id="targetedAssets" class="space-y-3">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>No targeted assets detected yet.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Row: Threat Table and Recommendations -->
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <!-- Detected Threats Table -->
+            <div class="xl:col-span-2 bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">Detected Threats</h2>
+                    <div class="flex space-x-2">
+                        <input type="text" id="threatSearch" placeholder="Search threats..."
+                            class="px-3 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                            onclick="dashboard.clearFilters()">
+                            Clear
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead>
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('ip')">
+                                    Threat IP
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('severity')">
+                                    Severity
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('first_seen')">
+                                    First Seen
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('last_seen')">
+                                    Last Seen
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('type')">
+                                    Threat Type
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('count')">
+                                    Count
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                                    onclick="dashboard.sortTable('status')">
+                                    Status
+                                </th>
+                                <th
+                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Actions
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="threatsTableBody" class="bg-white divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                                    No threats detected yet.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Action Recommendations -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">Action Recommendations</h2>
+                    <span id="pendingCount" class="px-2 py-1 text-xs bg-red-500 text-white rounded-full">0</span>
+                </div>
+                <div id="recommendationsList" class="space-y-4">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>Action recommendations will appear here when threats are detected.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Threat Detail Modal -->
+        <div id="threatDetailModal"
+            class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex justify-between items-start mb-6">
+                        <h3 class="text-2xl font-bold text-gray-800" id="modalThreatIp">Threat Details</h3>
+                        <button onclick="dashboard.closeModal()" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="modalContent">
+                        <!-- Dynamic content will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script>
+        class EnhancedLiveGuardDashboard {
+            constructor() {
+                this.currentSort = { field: 'last_seen', direction: 'desc' };
+                this.filteredThreats = [];
+                this.init();
+            }
+
+            init() {
+                this.initializeCharts();
+                this.setupEventHandlers();
+                this.startPolling();
+            }
+
+            initializeCharts() {
+                // Severity Breakdown Chart
+                const severityCtx = document.getElementById('severityChart').getContext('2d');
+                this.severityChart = new Chart(severityCtx, {
+                    type: 'doughnut',
+                    data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                // Threat Types Chart
+                const typesCtx = document.getElementById('threatTypesChart').getContext('2d');
+                this.threatTypesChart = new Chart(typesCtx, {
+                    type: 'bar',
+                    data: { labels: [], datasets: [{ data: [], backgroundColor: '#3b82f6' }] },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+
+            setupEventHandlers() {
+                document.getElementById('toggleCapture').addEventListener('click', () => {
+                    this.toggleCapture();
+                });
+            }
+
+            startPolling() {
+                setInterval(() => {
+                    this.loadEnhancedData();
+                }, 2000);
+            }
+
+            async loadEnhancedData() {
+                try {
+                    const [statsResponse, alertsResponse, threatsResponse] = await Promise.all([
+                        fetch('/api/stats'),
+                        fetch('/api/alerts'),
+                        fetch('/api/threats')
+                    ]);
+
+                    const stats = await statsResponse.json();
+                    const alerts = await alertsResponse.json();
+                    const threats = await threatsResponse.json();
+
+                    this.updateEnhancedStats(stats);
+                    this.updateEnhancedAlerts(alerts);
+                    this.updateEnhancedThreats(threats);
+                    this.updateCharts(stats);
+
+                } catch (error) {
+                    console.error('Error loading data:', error);
+                }
+            }
+
+            updateEnhancedStats(stats) {
+                if (stats.capture) {
+                    document.getElementById('totalPackets').textContent = stats.capture.total_packets?.toLocaleString() || '0';
+                    document.getElementById('packetsPerSecond').textContent = stats.capture.packets_per_second?.toFixed(2) || '0';
+                    document.getElementById('uptime').textContent = `${Math.round(stats.capture.uptime || 0)}s`;
+                    this.updateCaptureStatus(stats.capture.is_capturing);
+                }
+                if (stats.alerts) {
+                    document.getElementById('activeThreats').textContent = stats.alerts.active_alerts || '0';
+                }
+            }
+
+            updateCharts(stats) {
+                // Update severity chart
+                if (stats.threat_analysis?.severity_breakdown) {
+                    const severityData = stats.threat_analysis.severity_breakdown;
+                    this.severityChart.data.labels = Object.keys(severityData);
+                    this.severityChart.data.datasets[0].data = Object.values(severityData);
+                    this.severityChart.data.datasets[0].backgroundColor = ['#dc2626', '#ea580c', '#d97706', '#2563eb'];
+                    this.severityChart.update();
+                }
+
+                // Update threat types chart
+                if (stats.threat_analysis?.top_threat_types) {
+                    const typesData = stats.threat_analysis.top_threat_types;
+                    this.threatTypesChart.data.labels = typesData.map(t => t[0]);
+                    this.threatTypesChart.data.datasets[0].data = typesData.map(t => t[1]);
+                    this.threatTypesChart.update();
+                }
+            }
+
+            updateEnhancedAlerts(alerts) {
+                const alertsList = document.getElementById('alertsList');
+
+                if (alerts.length === 0) {
+                    alertsList.innerHTML = '<div class="text-center text-gray-500 py-8"><p>No alerts yet.</p></div>';
+                    return;
+                }
+
+                alertsList.innerHTML = '';
+                alerts.slice(0, 10).forEach(alert => {
+                    const alertElement = document.createElement('div');
+                    alertElement.className = `p-4 rounded-lg border-l-4 ${this.getAlertClass(alert)}`;
+
+                    alertElement.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h4 class="font-semibold text-gray-800">${alert.message}</h4>
+                        <p class="text-sm text-blue-600 mt-2">${alert.recommendation}</p>
+                    </div>
+                    <span class="text-xs text-gray-500">${new Date(alert.timestamp).toLocaleTimeString()}</span>
+                </div>
+                ${!alert.is_resolved ? `
+                <div class="mt-3 flex space-x-2">
+                    <button onclick="dashboard.acknowledgeAlert(${alert.id})" 
+                            class="px-3 py-1 text-xs bg-green-500 text-white rounded">
+                        Acknowledge
+                    </button>
+                </div>
+                ` : ''}
+            `;
+
+                    alertsList.appendChild(alertElement);
+                });
+            }
+
+            updateEnhancedThreats(threats) {
+                this.filteredThreats = threats;
+                this.renderThreatsTable();
+                this.updateTargetedAssets(threats);
+            }
+
+            renderThreatsTable() {
+                const tbody = document.getElementById('threatsTableBody');
+
+                if (this.filteredThreats.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No threats detected.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = this.filteredThreats.map(threat => `
+            <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 text-sm font-mono">${threat.source_ip}</td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-1 text-xs rounded-full ${this.getSeverityClass(threat.threat_level)}">
+                        ${threat.threat_level}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-sm">${new Date(threat.first_seen).toLocaleTimeString()}</td>
+                <td class="px-4 py-3 text-sm">${new Date(threat.last_seen).toLocaleTimeString()}</td>
+                <td class="px-4 py-3 text-sm">${threat.threat_type}</td>
+                <td class="px-4 py-3 text-sm">${threat.threat_count}</td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-1 text-xs rounded-full ${threat.status === 'Blocked' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                        ${threat.status}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-sm">
+                    <button onclick="dashboard.blockIp('${threat.source_ip}')" 
+                            class="px-2 py-1 text-xs bg-red-500 text-white rounded">
+                        Block
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+            }
+
+            updateTargetedAssets(threats) {
+                const assetsContainer = document.getElementById('targetedAssets');
+                const assetCounts = {};
+
+                threats.forEach(threat => {
+                    threat.targeted_assets?.forEach(asset => {
+                        assetCounts[asset] = (assetCounts[asset] || 0) + 1;
+                    });
+                });
+
+                const sortedAssets = Object.entries(assetCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+                if (sortedAssets.length === 0) {
+                    assetsContainer.innerHTML = '<div class="text-center text-gray-500 py-8"><p>No targeted assets.</p></div>';
+                    return;
+                }
+
+                assetsContainer.innerHTML = sortedAssets.map(([asset, count]) => `
+            <div class="flex justify-between items-center p-3 bg-gray-50 rounded">
+                <span class="text-sm font-mono">${asset}</span>
+                <span class="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">${count}</span>
+            </div>
+        `).join('');
+            }
+
+            async blockIp(ip) {
+                try {
+                    const response = await fetch('/api/block_ip', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ip })
+                    });
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        alert(`IP ${ip} blocked`);
+                        this.loadEnhancedData();
+                    }
+                } catch (error) {
+                    console.error('Error blocking IP:', error);
+                }
+            }
+
+            async acknowledgeAlert(alertId) {
+                try {
+                    const response = await fetch('/api/acknowledge_alert', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ alert_id: alertId })
+                    });
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        this.loadEnhancedData();
+                    }
+                } catch (error) {
+                    console.error('Error acknowledging alert:', error);
+                }
+            }
+
+            async toggleCapture() {
+                const button = document.getElementById('toggleCapture');
+                const endpoint = button.textContent.includes('Start') ? '/api/start_capture' : '/api/stop_capture';
+
+                try {
+                    const response = await fetch(endpoint);
+                    const data = await response.json();
+                    this.updateCaptureStatus(data.status === 'started');
+                } catch (error) {
+                    console.error('Error toggling capture:', error);
+                }
+            }
+
+            updateCaptureStatus(isCapturing) {
+                const indicator = document.getElementById('statusIndicator');
+                const button = document.getElementById('toggleCapture');
+
+                if (isCapturing) {
+                    indicator.innerHTML = '<div class="status-indicator status-running"></div><span class="text-sm text-gray-600">Capture Running</span>';
+                    button.textContent = 'Stop Capture';
+                    button.className = 'bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded';
+                } else {
+                    indicator.innerHTML = '<div class="status-indicator status-stopped"></div><span class="text-sm text-gray-600">Capture Stopped</span>';
+                    button.textContent = 'Start Capture';
+                    button.className = 'bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded';
+                }
+            }
+
+            getAlertClass(alert) {
+                return alert.is_resolved ? 'border-green-500 bg-green-50' : 'border-red-500 bg-red-50';
+            }
+
+            getSeverityClass(level) {
+                return level === 'CRITICAL' ? 'bg-red-100 text-red-800' :
+                    level === 'HIGH' ? 'bg-orange-100 text-orange-800' :
+                        level === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-blue-100 text-blue-800';
+            }
+        }
+
+        const dashboard = new EnhancedLiveGuardDashboard();
+    </script>
+</body>
+
+</html>
